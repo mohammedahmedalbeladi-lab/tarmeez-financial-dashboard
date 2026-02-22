@@ -526,6 +526,34 @@ def apply_plotly_theme(
 # =========================================================
 DEFAULT_CSV_NAME = "Demand Supply Planning.csv"  # <-- عدّلها لو اسم ملفك مختلف
 
+def mape_unweighted(df: pd.DataFrame, min_actual=1.0, cap_pct=500.0) -> float:
+    """
+    MAPE غير مرجّح لكن مضبوط:
+    - يستبعد الصفوف اللي Actual فيها صغير جدًا (Actual <= min_actual) لأن MAPE ينفجر
+    - يقص القيم الشاذة (APE%) بحد أعلى cap_pct حتى ما يخرب KPI بسبب صف واحد
+    """
+    a = df["Actual_Demand_units"].apply(_smart_to_number)
+    f = df["Forecast_units"].apply(_smart_to_number)
+
+    mask = a.notna() & f.notna() & (a > min_actual)
+    if mask.sum() == 0:
+        return np.nan
+
+    ape_pct = ((f[mask] - a[mask]).abs() / a[mask]) * 100.0
+    ape_pct = ape_pct.clip(upper=cap_pct)
+    return float(ape_pct.mean())
+
+
+def mae_units(df: pd.DataFrame) -> float:
+    """MAE مباشرة من Forecast و Actual (بدون الاعتماد على عمود جاهز ممكن يكون خربان)"""
+    a = df["Actual_Demand_units"].apply(_smart_to_number)
+    f = df["Forecast_units"].apply(_smart_to_number)
+
+    mask = a.notna() & f.notna()
+    if mask.sum() == 0:
+        return np.nan
+
+    return float((f[mask] - a[mask]).abs().mean())
 AR_MONTHS = {
     1:"يناير",2:"فبراير",3:"مارس",4:"أبريل",5:"مايو",6:"يونيو",
     7:"يوليو",8:"أغسطس",9:"سبتمبر",10:"أكتوبر",11:"نوفمبر",12:"ديسمبر"
@@ -554,16 +582,15 @@ def _smart_to_number(x):
 
     # Only comma exists
     if "," in s and "." not in s:
-        # If it's like '0,1' or '21,923' (could be decimal comma)
-        # Heuristic: if comma appears once AND digits after comma <= 3 -> treat as decimal comma
         parts = s.split(",")
-        if len(parts) == 2 and len(parts[1]) <= 3:
+        # ✅ اعتبرها decimal فقط إذا كانت مثل 0,1 أو 12,34 (رقمين) أو رقم يبدأ بـ 0
+        if len(parts) == 2 and (parts[0] == "0" or len(parts[1]) <= 2):
             s2 = parts[0] + "." + parts[1]
             return pd.to_numeric(s2, errors="coerce")
-        # Otherwise treat as thousands separators (remove all commas)
+
+        # ✅ غير كذا اعتبرها آلاف: 21,923 => 21923
         s = s.replace(",", "")
         return pd.to_numeric(s, errors="coerce")
-
     # Only dot or plain
     return pd.to_numeric(s, errors="coerce")
 
@@ -676,17 +703,20 @@ def load_dsp_csv(path_or_buffer) -> pd.DataFrame:
 
     return df.sort_values("Month").reset_index(drop=True)
 
-
 def weighted_mape(df: pd.DataFrame) -> float:
-    # Weighted by Actual volume
-    a = df["Actual_Demand_units"].replace(0, np.nan)
-    ae = (df["Forecast_units"] - df["Actual_Demand_units"]).abs()
-    w = df["Actual_Demand_units"].fillna(0)
-    denom = w.sum()
+    a = df["Actual_Demand_units"].apply(_smart_to_number)
+    f = df["Forecast_units"].apply(_smart_to_number)
+
+    mask = a.notna() & (a > 0) & f.notna()
+    if mask.sum() == 0:
+        return np.nan
+
+    ae = (f[mask] - a[mask]).abs()
+    denom = a[mask].sum()
     if denom == 0:
         return np.nan
-    return ( (ae.fillna(0) * w).sum() / denom ) * 100
 
+    return (ae.sum() / denom) * 100
 def bias_ratio(df: pd.DataFrame) -> float:
     # Bias as weighted mean error / weighted mean actual
     w = df["Actual_Demand_units"].fillna(0)
@@ -1230,16 +1260,21 @@ with tabs[1]:
     bias_val = bias_ratio(filtered)
 
     r = st.columns(4, gap="small")
-    with r[0]: kpi_card("W-MAPE (مرجّح)", fmt_pct(wmape_val), "أقل = أفضل")
+    with r[0]:
+        kpi_card("W-MAPE (مرجّح)", fmt_pct(wmape_val), "أقل = أفضل")
+
     with r[1]:
         bias_txt = "—" if pd.isna(bias_val) else f"{bias_val:.2f}"
         kpi_card("Bias (انحياز)", bias_txt, "قريب من 0 = ممتاز")
+
     with r[2]:
-        mae = filtered["Absolute_Error_units"].mean(skipna=True) if "Absolute_Error_units" in filtered.columns else np.nan
+        mae = mae_units(filtered)
         kpi_card("متوسط الخطأ المطلق (MAE)", fmt_num(mae, 1))
+
     with r[3]:
-        mape = filtered["APE"].replace([np.inf, -np.inf], np.nan).mean(skipna=True) * 100
-        kpi_card("MAPE (غير مرجّح)", fmt_pct(mape))
+        # ✅ هذا هو الإصلاح الحقيقي للرقم الخرافي
+        mape = mape_unweighted(filtered, min_actual=1.0, cap_pct=500.0)
+        kpi_card("MAPE (غير مرجّح)", fmt_pct(mape), "استبعاد Actual<=1 + قصّ القيم الشاذة")
 
     # KPI الأثر المالي (Forecast Variance Cost)
     var_cost = forecast_variance_cost(filtered)
