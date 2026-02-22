@@ -49,8 +49,8 @@ The dashboard includes:
 - Lead time variability suggests supplier reliability risks.
 
 ## Live Dashboard Link
-
-👉 **(PASTE YOUR STREAMLIT LINK HERE AFTER DEPLOYMENT)**
+Executive interactive dashboard built with Streamlit.
+https://tarmeez-financial-dashboard.streamlit.app/
 
 ## Assumptions & Limitations
 
