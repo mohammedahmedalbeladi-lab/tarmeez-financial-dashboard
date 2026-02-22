@@ -13,7 +13,8 @@ The dashboard answers key business questions:
 
 ## Data Source
 Dataset: Demand Supply Planning Dataset  
-Source: Public dataset for analytical purposes.
+Source: Kaggle (public dataset for analytical purposes)  
+Link: https://www.kaggle.com/datasets/mustofaahmad/demand-and-supply-planning-chemical-industry/data
 
 The dataset includes monthly demand planning metrics such as forecast units, actual demand, inventory value, fill rate, stockout flags, and lead time attributes.
 
